@@ -14,7 +14,10 @@ from enum import Enum
 from typing import Tuple
 
 import requests
-from win32_setctime import setctime
+
+# Windows 专用模块
+if platform.system() == "Windows":
+    from win32_setctime import setctime
 
 from core import log
 from core.api import YoudaoNoteApi
@@ -52,6 +55,7 @@ class YoudaoNotePull(object):
         self.youdaonote_api = None
         self.smms_secret_token = None
         self.is_relative_path = None  # 是否使用相对路径
+        self.synced_files = set()  # 记录所有同步的文件（相对于root_local_dir）
 
     def _covert_config(self, config_path=None) -> Tuple[dict, str]:
         """
@@ -235,6 +239,35 @@ class YoudaoNotePull(object):
                 modify_time = file_entry["modifyTimeForSort"]
                 create_time = file_entry["createTimeForSort"]
                 self._add_or_update_file(id, name, local_dir, modify_time, create_time)
+    
+    def _clean_orphaned_files(self):
+        """
+        清理本地存在但云端不存在的文件和资源
+        """
+        # 1. 清理posts文件夹中多余的md文件
+        posts_dir = os.path.join(self.root_local_dir, "posts")
+        if os.path.exists(posts_dir):
+            for filename in os.listdir(posts_dir):
+                file_path = os.path.join(posts_dir, filename)
+                if os.path.isfile(file_path):
+                    # 计算相对路径
+                    rel_path = os.path.join("posts", filename).replace("\\", "/")
+                    if rel_path not in self.synced_files:
+                        logging.info("删除云端不存在的笔记：「{}」".format(file_path))
+                        os.remove(file_path)
+        
+        # 2. 清理assets中无主的资源文件夹
+        assets_dir = os.path.join(self.root_local_dir, "assets")
+        if os.path.exists(assets_dir):
+            for note_folder in os.listdir(assets_dir):
+                note_folder_path = os.path.join(assets_dir, note_folder)
+                if os.path.isdir(note_folder_path):
+                    # 检查对应的md文件是否存在于synced_files中
+                    expected_md = os.path.join("posts", note_folder + ".md").replace("\\", "/")
+                    if expected_md not in self.synced_files:
+                        import shutil
+                        logging.info("删除无主的资源文件夹：「{}」".format(note_folder_path))
+                        shutil.rmtree(note_folder_path)
 
     def _add_or_update_file(
         self, file_id, file_name, local_dir, modify_time, create_time
@@ -257,14 +290,17 @@ class YoudaoNotePull(object):
         # 所有类型文件均下载，不做处理
         file_type = self._judge_type(file_id, youdao_file_suffix)
 
-        # 「文档」类型本地文件均已 .md 结尾
-        local_file_path = (
-            os.path.join(
-                local_dir, "".join([os.path.splitext(file_name)[0], MARKDOWN_SUFFIX])
+        # 「文档」类型本地文件均已 .md 结尾，并保存在 posts 文件夹中
+        if file_type != FileType.OTHER:
+            # Markdown文件保存在posts文件夹
+            posts_dir = os.path.join(local_dir, "posts").replace("\\", "/")
+            if not os.path.exists(posts_dir):
+                os.makedirs(posts_dir, exist_ok=True)
+            local_file_path = os.path.join(
+                posts_dir, "".join([os.path.splitext(file_name)[0], MARKDOWN_SUFFIX])
             ).replace("\\", "/")
-            if file_type != FileType.OTHER
-            else original_file_path
-        )
+        else:
+            local_file_path = original_file_path
 
         # 如果有有道云笔记是「文档」类型，则提示类型
         tip = (
@@ -272,6 +308,11 @@ class YoudaoNotePull(object):
         )
 
         file_action = self._get_file_action(local_file_path, modify_time)
+        
+        # 记录同步的文件（相对路径）
+        rel_path = os.path.relpath(local_file_path, self.root_local_dir).replace("\\", "/")
+        self.synced_files.add(rel_path)
+        
         if file_action == FileActionEnum.CONTINUE:
             return
         if file_action == FileActionEnum.UPDATE:
@@ -284,13 +325,9 @@ class YoudaoNotePull(object):
                 local_file_path,
                 file_type,
                 youdao_file_suffix,
+                local_dir,
             )
-            if file_action == FileActionEnum.CONTINUE:
-                logging.debug(
-                    "{}「{}」{}".format(file_action.value, local_file_path, tip)
-                )
-            else:
-                logging.info("{}「{}」{}".format(file_action.value, local_file_path, tip))
+            logging.info("{}「{}」{}".format(file_action.value, local_file_path, tip))
 
             # 本地文件时间设置为有道云笔记的时间
             if platform.system() == "Windows":
@@ -306,7 +343,7 @@ class YoudaoNotePull(object):
             )
 
     def _pull_file(
-        self, file_id, file_path, local_file_path, file_type, youdao_file_suffix
+        self, file_id, file_path, local_file_path, file_type, youdao_file_suffix, local_dir
     ):
         """
         下载文件
@@ -315,8 +352,20 @@ class YoudaoNotePull(object):
         :param local_file_path: 本地
         :param file_type:
         :param youdao_file_suffix:
+        :param local_dir: 本地目录
         :return:
         """
+        # 0、如果是文档类型（会被转换为markdown），清理对应的资源文件夹
+        if file_type != FileType.OTHER:
+            import shutil
+            # 获取笔记名称（不含扩展名）
+            note_name = os.path.splitext(os.path.basename(local_file_path))[0]
+            # 清理资源文件夹
+            assets_folder = os.path.join(local_dir, "assets", note_name).replace("\\", "/")
+            if os.path.exists(assets_folder):
+                logging.info("清理旧资源文件夹：「{}」".format(assets_folder))
+                shutil.rmtree(assets_folder)
+        
         # 1、所有的都先下载
         response = self.youdaonote_api.get_file_by_id(file_id)
         with open(file_path, "wb") as f:
@@ -331,15 +380,25 @@ class YoudaoNotePull(object):
                 YoudaoNoteConvert.covert_html_to_markdown(file_path)
             except Exception as e:
                 logging.info("note 笔记转换 MarkDown 失败，将跳过", repr(e))
+            # 转换后文件名变为 .md
+            file_path = os.path.splitext(file_path)[0] + MARKDOWN_SUFFIX
         elif file_type == FileType.JSON:
             YoudaoNoteConvert.covert_json_to_markdown(file_path)
+            # 转换后文件名变为 .md
+            file_path = os.path.splitext(file_path)[0] + MARKDOWN_SUFFIX
+
+        # 2.5、如果是文档类型且路径不同，将文件移动到目标位置（posts文件夹）
+        if file_type != FileType.OTHER and file_path != local_file_path:
+            import shutil
+            shutil.move(file_path, local_file_path)
 
         # 3、迁移文本文件里面的有道云笔记图片（链接）
         if file_type != FileType.OTHER or youdao_file_suffix == MARKDOWN_SUFFIX:
             imagePull = ImagePull(
                 self.youdaonote_api, self.smms_secret_token, self.is_relative_path
             )
-            imagePull.migration_ydnote_url(local_file_path)
+            # 传入local_dir以便正确计算assets路径
+            imagePull.migration_ydnote_url(local_file_path, local_dir)
 
 
 if __name__ == "__main__":
@@ -357,6 +416,9 @@ if __name__ == "__main__":
         youdaonote_pull.pull_dir_by_id_recursively(
             ydnote_dir_id, youdaonote_pull.root_local_dir
         )
+        # 清理云端不存在的文件
+        logging.info("正在清理本地多余的文件 ...")
+        youdaonote_pull._clean_orphaned_files()
     except requests.exceptions.ProxyError:
         logging.info(
             "请检查网络代理设置；也有可能是调用有道云笔记接口次数达到限制，请等待一段时间后重新运行脚本，若一直失败，可删除「cookies.json」后重试"
@@ -371,7 +433,7 @@ if __name__ == "__main__":
         sys.exit(1)
     # 链接错误等异常
     except Exception as err:
-        logging.info("Cookies 可能已过期！其他错误：", format(err))
+        logging.info("Cookies 可能已过期！其他错误：%s", format(err))
         traceback.print_exc()
         logging.info("已终止执行")
         sys.exit(1)

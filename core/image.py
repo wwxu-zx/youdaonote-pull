@@ -9,10 +9,31 @@ import requests
 
 REGEX_IMAGE_URL = re.compile(r"!\[.*?\]\((.*?note\.youdao\.com.*?)\)")
 REGEX_ATTACH = re.compile(r"\[(.*?)\]\(((http|https)://note\.youdao\.com.*?)\)")
-# 有道云笔记的图片地址
-IMAGES = "images"
-# 有道云笔记的附件地址
-ATTACH = "attachments"
+# 资源统一目录
+ASSETS = "assets"
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    清理文件名，将中文字符替换为英文
+    :param filename: 原始文件名
+    :return: 清理后的文件名
+    """
+    # 智能替换"截图"为screenshot
+    # 如果截图前后有字符，保留下划线分隔
+    def replace_screenshot(match):
+        before = match.group(1)
+        after = match.group(2)
+        # 如果前面有字符且不是下划线/横杠/点，添加下划线
+        prefix = '_' if before and before not in ('_', '-', '.', '') else ''
+        # 如果后面有字符且不是下划线/横杠/点，添加下划线  
+        suffix = '_' if after and after not in ('_', '-', '.', '') else ''
+        return before + prefix + 'screenshot' + suffix + after
+    
+    # 匹配"截图"，捕获前后字符
+    filename = re.sub(r'([^/]*?)截图([^/]*)', replace_screenshot, filename)
+    
+    return filename
 
 
 class ImagePull:
@@ -34,10 +55,11 @@ class ImagePull:
         file_path = file_path.replace(" ", "%20")
         return file_path
 
-    def migration_ydnote_url(self, file_path):
+    def migration_ydnote_url(self, file_path, local_dir=None):
         """
         迁移有道云笔记文件 URL
-        :param file_path:
+        :param file_path: markdown文件路径
+        :param local_dir: 本地目录，用于计算assets路径
         :return:
         """
 
@@ -51,19 +73,27 @@ class ImagePull:
             logging.info("正在转换有道云笔记「{}」中的有道云图片链接...".format(file_path))
         for image_url in image_urls:
             try:
-                image_path = self._get_new_image_path(file_path, image_url)
+                image_path = self._get_new_image_path(file_path, image_url, local_dir)
             except Exception as error:
                 logging.info(
                     "下载图片「{}」可能失败！请检查图片！错误提示：{}".format(image_url, format(error))
                 )
             if image_url == image_path:
                 continue
-            # 将绝对路径替换为相对路径，实现满足 Obsidian 格式要求
-            # 将 image_path 路径中 images 之前的路径去掉，只保留以 images 开头的之后的路径
+            # 将绝对路径替换为相对路径
+            # markdown 文件在 posts/ 目录，图片在 assets/ 目录，需要 ../assets/...
             if self.is_relative_path and not self.smms_secret_token:
-                image_path = image_path[image_path.find(IMAGES) :]
+                assets_index = image_path.find(ASSETS)
+                if assets_index != -1:
+                    # 从 assets 开始的相对路径
+                    relative_path = image_path[assets_index:]
+                    # 由于 md 文件在 posts/ 目录，需要 ../ 前缀
+                    # 使用 <> 包裹路径以支持包含空格和括号的路径
+                    image_path = "<../" + relative_path + ">"
+                else:
+                    # 如果找不到 assets，保持原样
+                    image_path = image_path
 
-            image_path = self._url_encode(image_path)
             content = content.replace(image_url, image_path)
 
         # 附件
@@ -73,29 +103,40 @@ class ImagePull:
         for attach_name_and_url in attach_name_and_url_list:
             attach_url = attach_name_and_url[1]
             attach_path = self._download_ydnote_url(
-                file_path, attach_url, attach_name_and_url[0]
+                file_path, attach_url, attach_name_and_url[0], local_dir
             )
             if not attach_path:
                 continue
-            # 将 attach_path 路径中 attachments 之前的路径去掉，只保留以 attachments 开头的之后的路径
+            # 将绝对路径替换为相对路径
+            # markdown 文件在 posts/ 目录，附件在 assets/ 目录，需要 ../assets/...
             if self.is_relative_path:
-                attach_path = attach_path[attach_path.find(ATTACH) :]
+                assets_index = attach_path.find(ASSETS)
+                if assets_index != -1:
+                    # 从 assets 开始的相对路径
+                    relative_path = attach_path[assets_index:]
+                    # 由于 md 文件在 posts/ 目录，需要 ../ 前缀
+                    # 使用 <> 包裹路径以支持包含空格和括号的路径
+                    attach_path = "<../" + relative_path + ">"
+                else:
+                    # 如果找不到 assets，保持原样
+                    attach_path = attach_path
             content = content.replace(attach_url, attach_path)
 
         with open(file_path, "wb") as f:
             f.write(content.encode())
         return
 
-    def _get_new_image_path(self, file_path, image_url) -> str:
+    def _get_new_image_path(self, file_path, image_url, local_dir=None) -> str:
         """
         将图片链接转换为新的链接
         :param file_path:
         :param image_url:
+        :param local_dir: 本地目录
         :return: new_image_path
         """
         # 当 smms_secret_token 为空（不上传到 SM.MS），下载到图片到本地
         if not self.smms_secret_token:
-            image_path = self._download_ydnote_url(file_path, image_url)
+            image_path = self._download_ydnote_url(file_path, image_url, None, local_dir)
             return image_path or image_url
 
         # smms_secret_token 不为空，上传到 SM.MS
@@ -108,15 +149,16 @@ class ImagePull:
         if not error_msg:
             return new_file_url
         logging.info(error_msg)
-        image_path = self._download_ydnote_url(file_path, image_url)
+        image_path = self._download_ydnote_url(file_path, image_url, None, local_dir)
         return image_path or image_url
 
-    def _download_ydnote_url(self, file_path, url, attach_name=None) -> str:
+    def _download_ydnote_url(self, file_path, url, attach_name=None, local_dir=None) -> str:
         """
         下载文件到本地，返回本地路径
-        :param file_path:
+        :param file_path: markdown文件路径
         :param url:
         :param attach_name:
+        :param local_dir: 本地目录，用于计算assets路径
         :return:  path
         """
         try:
@@ -136,34 +178,43 @@ class ImagePull:
             return ""
 
         if attach_name:
-            # 默认下载附件到 attachments 文件夹
-            file_dirname = ATTACH
+            # 附件使用原文件名
             file_suffix = attach_name
         else:
-            # 默认下载图片到 images 文件夹
-            file_dirname = IMAGES
+            # 图片根据content-type获取扩展名
             # 后缀 png 和 jpeg 后可能出现 ; `**.png;`, 原因未知
             content_type_arr = content_type.split("/")
             file_suffix = (
                 "." + content_type_arr[1].replace(";", "")
                 if len(content_type_arr) == 2
-                else "jpg"
+                else ".jpg"
             )
 
-        local_file_dir = None
-        # 如果 file_name 中不包含 . 号
+        # 获取文件所在目录
         if file_path.find(".") == -1:
-            local_file_dir = os.path.join(self.root_local_dir, file_dirname).replace(
-                "\\", "/"
-            )
+            # 如果 file_path 没有扩展名，说明是目录，直接在该目录下创建 assets 文件夹
+            file_dir = file_path
+            md_file_name = None
         else:
-            # 截取字符串 file_path 中文件夹全路径(即实现在具体文件夹目录下再生成图片文件夹路径，而非在根目录生成图片文件夹路径)
-            local_file_dir = os.path.join(
-                file_path[: file_path.rfind("/")], file_dirname
-            ).replace("\\", "/")
+            # 获取markdown文件名（不含扩展名）
+            md_file_name = os.path.splitext(os.path.basename(file_path))[0]
+            # 如果提供了local_dir，说明markdown文件在posts文件夹，需要在local_dir下创建 assets
+            if local_dir:
+                file_dir = local_dir
+            else:
+                # 否则使用markdown文件所在目录
+                file_dir = file_path[: file_path.rfind("/")]
+        
+        # 构建本地文件目录
+        # 图片和附件都保存在 assets/{markdown文件名}/ 下
+        if md_file_name:
+            local_file_dir = os.path.join(file_dir, ASSETS, md_file_name).replace("\\", "/")
+        else:
+            # 如果没有文件名，直接保存在assets文件夹下
+            local_file_dir = os.path.join(file_dir, ASSETS).replace("\\", "/")
 
         if not os.path.exists(local_file_dir):
-            os.mkdir(local_file_dir)
+            os.makedirs(local_file_dir, exist_ok=True)
         file_basename = os.path.basename(urlparse(url).path)
 
         # 请求后的真实的 URL 中才有东西
@@ -180,6 +231,10 @@ class ImagePull:
             file_name = file_basename + filename
         else:
             file_name = "".join([file_basename, file_suffix])
+        
+        # 清理文件名
+        file_name = sanitize_filename(file_name)
+        
         local_file_path = os.path.join(local_file_dir, file_name).replace("\\", "/")
 
         try:

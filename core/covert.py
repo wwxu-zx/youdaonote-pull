@@ -193,16 +193,69 @@ class JsonConvert(object):
         return all_text
 
     def _convert_text_attribute(self, text: str, text_attrs: list):
-        """文本属性"""
+        """文本属性
+        
+        支持的属性:
+        - b: 粗体 (bold)
+        - i: 斜体 (italic)
+        - inlineCode: 行内代码
+        - c: 文字颜色 (color)
+        - bg: 背景色 (background color)
+        """
 
         if isinstance(text_attrs, list) and text_attrs and text:
+            # 收集所有样式
+            has_bold = False
+            has_italic = False
+            has_inline_code = False
+            text_color = None
+            bg_color = None
+            
             for attr in text_attrs:
-                if attr["2"] == "b":
-                    # 粗体
+                attr_type = attr.get("2", "")
+                
+                if attr_type == "b":
+                    has_bold = True
+                elif attr_type == "i":
+                    has_italic = True
+                elif attr_type == "inlineCode":
+                    has_inline_code = True
+                elif attr_type == "bg":
+                    # 背景色
+                    bg_color = attr.get("0")
+                elif attr_type == "c":
+                    # 文字颜色（从attr['0']获取）
+                    text_color = attr.get("0")
+                
+                # 如果attr['0']存在且attr['2']不是bg或c，可能也是文字颜色
+                if attr.get("0") and attr_type not in ["bg", "c", "b", "i", "inlineCode"]:
+                    if not text_color:
+                        text_color = attr.get("0")
+            
+            # 按优先级应用样式：行内代码 > 粗体/斜体 > 颜色
+            if has_inline_code:
+                # 行内代码不需要HTML转义，Markdown会处理
+                text = f"`{text}`"
+            else:
+                # 应用粗体和斜体（Markdown语法）
+                if has_bold:
                     text = f"**{text}**"
-                elif attr["2"] == "i":
-                    # 斜体
+                if has_italic:
                     text = f"*{text}*"
+                
+                # 应用颜色（使用HTML标签，需要转义文本内容）
+                if text_color or bg_color:
+                    # 转义HTML特殊字符，但保留Markdown的粗体/斜体标记
+                    # 注意：不要转义 ** 和 *，因为它们是Markdown语法
+                    style_parts = []
+                    if text_color:
+                        style_parts.append(f"color: {text_color}")
+                    if bg_color:
+                        style_parts.append(f"background-color: {bg_color}")
+                    style = "; ".join(style_parts)
+                    # 对于带有HTML标签的文本，需要确保HTML特殊字符被正确处理
+                    # 但Markdown的 ** 和 * 应该保留
+                    text = f'<span style="{style}">{text}</span>'
 
         return text
 
@@ -444,6 +497,51 @@ class YoudaoNoteConvert(object):
         return f"\r\n\r\n".join(new_content_list)  # 换行 1 行
 
     @staticmethod
+    def _clean_markdown_format(content: str) -> str:
+        """
+        清理 markdown 格式问题
+        :param content: markdown 内容
+        :return: 清理后的内容
+        """
+        import re
+        # 清理标题中的所有粗体标记（包括部分粗体）
+        # 例如：## 学习表征（**Representations**） -> ## 学习表征（Representations）
+        def clean_heading_bold(match):
+            prefix = match.group(1)  # ## 或 ###
+            heading_text = match.group(2)  # 标题文本
+            # 移除文本中的所有 ** 标记
+            cleaned_text = heading_text.replace('**', '')
+            return f"{prefix} {cleaned_text}"
+        
+        content = re.sub(r'^(#{1,6})\s+(.+)$', clean_heading_bold, content, flags=re.MULTILINE)
+        
+        # 修复 **Text: **[link] 格式，改为 **Text:** [link]
+        # 这种情况通常出现在粗体文本后紧跟链接
+        content = re.sub(r'\*\*([^*]+):\s*\*\*\s*\[', r'**\1:** [', content)
+        
+        # 修复连续的 **** 为 **（两个粗体紧邻）
+        content = re.sub(r'\*\*\*\*', '**', content)
+        
+        # 修复不完整的粗体标记：**text1**text2** -> **text1text2**
+        # 只处理中间没有空格的情况，避免影响 **text1** text2 **text3** 这种正常情况
+        content = re.sub(r'\*\*([^*\n]+)\*\*([^*\s\n]+?)\*\*', r'**\1\2**', content)
+        
+        # 在标题前添加<br>分隔章节，但需要避免：
+        # - 文档开头的标题
+        # - 代码块后的标题（```后）
+        # - 另一个标题后的标题
+        # - 列表后的标题
+        # 只在普通段落、图片、引用等内容后添加
+        
+        # 二级标题前添加2个<br>（只在段落文本、图片、引用块等后面）
+        content = re.sub(r'([^\n`#\-*])\n\n(## [^#])', r'\1<br><br>\n\n\2', content)
+        # 三级和四级标题前添加1个<br>
+        content = re.sub(r'([^\n`#\-*])\n\n(### [^#])', r'\1<br>\n\n\2', content)
+        content = re.sub(r'([^\n`#\-*])\n\n(#### [^#])', r'\1<br>\n\n\2', content)
+        
+        return content
+
+    @staticmethod
     def covert_json_to_markdown(file_path) -> str:
         """
         转换 Json 为 MarkDown
@@ -457,6 +555,8 @@ class YoudaoNoteConvert(object):
             os.rename(file_path, new_file_path)
             return False
         new_content = YoudaoNoteConvert._covert_json_to_markdown_content(file_path)
+        # 清理格式问题
+        new_content = YoudaoNoteConvert._clean_markdown_format(new_content)
         with open(new_file_path, "wb") as f:
             f.write(new_content.encode("utf-8"))
         # 删除旧文件

@@ -1,6 +1,7 @@
 .idea/
 *.iml
 cookies.json
+config.json
 .python-version
 .history
 __pycache__
@@ -12,3 +13,15 @@ dist
 *.spec
 wine
 xiaobai
+
+# Python
+*.py[cod]
+*$py.class
+*.so
+
+# macOS
+.DS_Store
+
+# 临时文件
+*.bak
+.tmp/
