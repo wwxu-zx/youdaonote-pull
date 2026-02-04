@@ -28,7 +28,7 @@
 
 ```json
 {
-    "local_dir": "/Users/wwxu/Documents/ydnote",
+    "local_dir": "./ydnote",
     "ydnote_dir": "Blogs",
     "smms_secret_token": "",
     "is_relative_path": true
@@ -76,24 +76,24 @@ python pull.py
 正在 pull，请稍后 ...
 新增「posts/深度学习基础.md」
 新增「posts/Python最佳实践.md」
-已将图片「...」转换为「/Users/wwxu/Documents/ydnote/assets/深度学习基础/image1.png」
+已将图片「...」转换为「./ydnote/assets_ori/深度学习基础/abc123...def.png」
 运行完成！耗时 15 秒
 ```
 
 **生成的目录结构：**
 
 ```
-/Users/wwxu/Documents/ydnote/
-├── posts/                          # 所有 Markdown 笔记
+./ydnote/
+├── posts/                          # 所有 Markdown 笔记（文件名已规范化）
 │   ├── 深度学习基础.md
 │   ├── Python最佳实践.md
 │   └── ...
-└── assets/                         # 图片和附件
+└── assets_ori/                     # 原始图片和附件（使用内容 MD5 命名）
     ├── 深度学习基础/
-    │   ├── image1.png
-    │   └── image2.png
+    │   ├── abc123...def.png        # 使用内容 MD5 命名
+    │   └── 456789...012.png
     └── Python最佳实践/
-        └── diagram.png
+        └── fed456...abc.png
 ```
 
 **关键特性：**
@@ -101,10 +101,32 @@ python pull.py
 - ✅ 保留文字颜色和背景色
 - ✅ 自动清理云端已删除的文件
 - ✅ 图片和附件按笔记分组管理
+- ✅ 文件名规范化（只保留中英文、数字、下划线）
+- ✅ 图片使用内容 MD5 命名（去重、唯一标识）
 
 ---
 
-### 步骤 2：推送到 GitHub
+### 步骤 2：生成 MD5 命名的图片
+
+为了便于在 GitHub 上管理和引用，建议将原始图片重命名为 MD5：
+
+```bash
+cd /Users/wwxu/Projects/youdaonote-pull
+
+# 将 assets_ori 中的图片重命名为 MD5 并输出到 assets
+python rename_images_by_md5.py ./ydnote/assets_ori ./ydnote/assets
+```
+
+**工具特性：**
+
+- ✅ 基于图片内容计算 MD5（相同内容自动去重）
+- ✅ 保持原有目录层级结构
+- ✅ 保留原始图片扩展名（.png, .jpg 等）
+- ✅ 已存在的文件自动跳过
+
+---
+
+### 步骤 3：推送到 GitHub
 
 #### 首次推送
 
@@ -138,11 +160,20 @@ git remote add origin https://github.com/your_username/blog.git
 git push -u origin main
 ```
 
+**说明：**
+- `ydnote/` 是同步目录，用于从有道云笔记拉取内容
+- 经过人工审核/修改后，将需要发布的内容拷贝到 `blog/` 目录
+- `blog/` 目录作为 Git 仓库推送到 GitHub
+
 #### 后续更新
 
 ```bash
-cd /Users/wwxu/Projects/blog
+# 1. 从 ydnote 拷贝审核后的内容到 blog
+cp -r /Users/wwxu/Projects/youdaonote-pull/ydnote/posts/* /Users/wwxu/Projects/blog/posts/
+cp -r /Users/wwxu/Projects/youdaonote-pull/ydnote/assets/* /Users/wwxu/Projects/blog/assets/
 
+# 2. 推送到 GitHub
+cd /Users/wwxu/Projects/blog
 git add .
 git commit -m "update: $(date +%Y-%m-%d)"
 git push
@@ -154,7 +185,7 @@ git push
 
 ---
 
-### 步骤 3：转换为平台发布版本
+### 步骤 4：转换为平台发布版本
 
 ```bash
 cd /Users/wwxu/Projects/youdaonote-pull
@@ -164,11 +195,16 @@ cd /Users/wwxu/Projects/youdaonote-pull
 
 # 方式 B：完整命令
 python convert_for_platform.py \
-  --blog-dir /Users/wwxu/Documents/ydnote \
+  --blog-dir ./ydnote \
   --github-user your_username \
   --github-repo blog \
   --github-branch main
 ```
+
+**说明：**
+- 转换脚本基于 `ydnote/` 目录生成平台版本
+- 生成的 `ydnote/platform_ready/` 可用于平台发布
+- 审核后的内容手动拷贝到 `blog/` 目录推送 GitHub
 
 **转换过程：**
 
@@ -182,13 +218,13 @@ python convert_for_platform.py \
 ✨ 处理完成!
    成功: 10 个文件
 
-📂 输出目录: /Users/wwxu/Documents/ydnote/platform_ready
+📂 输出目录: ./ydnote/platform_ready
 
 📌 使用提示:
    1. 确保已将代码 push 到 GitHub 仓库
    2. 确保仓库是 public（或配置了访问权限）
    3. 等待几分钟让 GitHub CDN 生效
-   4. 在 /Users/wwxu/Documents/ydnote/platform_ready 中复制文章内容
+   4. 在 ./ydnote/platform_ready 中复制文章内容
    5. 粘贴到掘金、知乎等平台发布
 ```
 
@@ -203,7 +239,7 @@ python convert_for_platform.py \
 
 ---
 
-### 步骤 4：发布到掘金
+### 步骤 5：发布到掘金
 
 #### 4.1 访问掘金创作中心
 
@@ -217,10 +253,10 @@ https://juejin.cn/editor/drafts/new
 
 ```bash
 # 在 Finder 中打开
-open /Users/wwxu/Documents/ydnote/platform_ready
+open ./ydnote/platform_ready
 
 # 或使用命令行查看
-cat /Users/wwxu/Documents/ydnote/platform_ready/深度学习基础.md
+cat ./ydnote/platform_ready/深度学习基础.md
 ```
 
 选择要发布的文章，**复制全部内容**。
@@ -249,7 +285,7 @@ cat /Users/wwxu/Documents/ydnote/platform_ready/深度学习基础.md
 
 ---
 
-### 步骤 5：发布到知乎
+### 步骤 6：发布到知乎
 
 #### 5.1 访问知乎创作中心
 
@@ -262,7 +298,7 @@ https://www.zhihu.com/creator/featured-question/write
 
 #### 5.3 粘贴内容
 
-打开 `/Users/wwxu/Documents/ydnote/platform_ready/{文章名}.md`，复制全部内容粘贴。
+打开 `./ydnote/platform_ready/{文章名}.md`，复制全部内容粘贴。
 
 #### 5.4 调整格式
 
@@ -292,21 +328,35 @@ https://www.zhihu.com/creator/featured-question/write
 cd /Users/wwxu/Projects/youdaonote-pull
 python pull.py
 
-# 2. 将待发布的 blog 拷贝到 blog project 目录下，推送到 GitHub
+# 2. （可选）生成 MD5 命名的图片
+python rename_images_by_md5.py ./ydnote/assets_ori ./ydnote/assets
+
+# 3. 在 ydnote/ 中审核和修改内容
+
+# 4. 转换为平台版本
+./quick_convert.sh
+
+# 5. 手动拷贝审核后的内容到 blog/（需要发布的内容）
+# 根据需要选择性拷贝
+cp ./ydnote/posts/某篇文章.md /Users/wwxu/Projects/blog/posts/
+cp -r ./ydnote/assets/某篇文章/ /Users/wwxu/Projects/blog/assets/
+
+# 6. 推送到 GitHub
 cd /Users/wwxu/Projects/blog
 git add .
 git commit -m "update: $(date +%Y-%m-%d)"
 git push
 
-# 3. 等待 2-5 分钟（让 GitHub CDN 生效）
+# 7. 等待 2-5 分钟（让 GitHub CDN 生效）
 sleep 300
 
-# 4. 转换平台版本
-cd /Users/wwxu/Projects/youdaonote-pull
+# 8. 发布到平台（从 ydnote/platform_ready 复制）
+open /Users/wwxu/Projects/youdaonote-pull/ydnote/platform_ready
+```
 ./quick_convert.sh
 
-# 5. 发布到平台
-open /Users/wwxu/Documents/ydnote/platform_ready
+# 6. 发布到平台
+open ./ydnote/platform_ready
 ```
 
 ---
@@ -362,16 +412,41 @@ https://raw.githubusercontent.com/your_username/blog/main/assets/{笔记名}/{�
 ### 📂 目录结构说明
 
 ```
-blog/
-├── posts/              # Markdown 文章（推送到 GitHub）
-├── assets/             # 图片和附件（推送到 GitHub）
-└── platform_ready/     # 平台版本（不推送，由 .gitignore 排除）
+youdaonote-pull/
+├── ydnote/             # 有道云笔记同步目录（本地）
+│   ├── posts/          # Markdown 笔记（文件名已规范化）
+│   ├── assets_ori/     # 原始图片（MD5 命名，仅本地保留）
+│   └── assets/         # MD5 重命名图片（可选生成）
+
+blog/                   # Git 仓库目录（推送到 GitHub）
+├── posts/              # 经审核的 Markdown 文章
+├── assets/             # 经审核的图片资源
+└── platform_ready/     # 平台版本（不推送）
 ```
+
+**工作流说明：**
+
+1. **同步阶段**：`pull.py` 将有道云笔记同步到 `ydnote/` 目录
+2. **审核阶段**：人工检查、修改 `ydnote/` 中的内容
+3. **发布阶段**：将审核后的内容拷贝到 `blog/` 目录并推送
+4. **转换阶段**：`convert_for_platform.py` 基于 `blog/` 目录生成平台版本
 
 **为什么分开？**
 
-- `posts/` 和 `assets/`: GitHub 仓库内容，图片使用相对路径
-- `platform_ready/`: 平台发布版本，图片使用绝对 GitHub CDN 路径
+- `ydnote/`: 同步目录，可能包含未完成或不想发布的内容
+- `blog/`: 发布目录，只包含审核后要公开的内容
+- `assets_ori/`: 原始图片，仅本地保留，不推送到 GitHub
+- `assets/`: MD5 命名的精简图片，推送到 GitHub 作为图床
+
+**文件名规范化规则：**
+
+- 保留：中文、英文字母、数字、下划线、横杠、点号（扩展名）
+- 替换为下划线：空格、括号、&等特殊字符
+- 合并连续下划线并去除首尾下划线/横杠
+- 示例：
+  - `AlexNet (ImageNet).md` → `AlexNet_ImageNet.md`
+  - `深度学习 - CNN.md` → `深度学习-CNN.md`（保留横杠）
+  - `Research & Papers.md` → `Research_Papers.md`
 
 ---
 
@@ -441,10 +516,10 @@ git push -u origin main -f
 
 ```bash
 # 列出所有待发布文章
-ls /Users/wwxu/Documents/ydnote/platform_ready
+ls ./ydnote/platform_ready
 
 # 按修改时间排序
-ls -lt /Users/wwxu/Documents/ydnote/platform_ready
+ls -lt ./ydnote/platform_ready
 ```
 
 ### 2. 自定义颜色方案
@@ -463,11 +538,11 @@ COLOR_NORMALIZATION = {
 
 ```bash
 python convert_for_platform.py \
-  --blog-dir /Users/wwxu/Documents/ydnote \
+  --blog-dir ./ydnote \
   --github-user your_username
 
 # 手动筛选
-cp /Users/wwxu/Documents/ydnote/platform_ready/特定文章.md ~/Desktop/
+cp ./ydnote/platform_ready/特定文章.md ~/Desktop/
 ```
 
 ### 4. 定时自动同步

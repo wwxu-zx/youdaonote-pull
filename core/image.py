@@ -1,4 +1,7 @@
+import hashlib
+import imghdr
 import logging
+import mimetypes
 import os
 import re
 from typing import Tuple
@@ -10,7 +13,7 @@ import requests
 REGEX_IMAGE_URL = re.compile(r"!\[.*?\]\((.*?note\.youdao\.com.*?)\)")
 REGEX_ATTACH = re.compile(r"\[(.*?)\]\(((http|https)://note\.youdao\.com.*?)\)")
 # 资源统一目录
-ASSETS = "assets"
+ASSETS = "assets_ori"
 
 
 def sanitize_filename(filename: str) -> str:
@@ -177,18 +180,23 @@ class ImagePull:
             logging.info(error_msg)
             return ""
 
+        normalized_content_type = content_type.split(";")[0].strip().lower() if content_type else ""
+        if (
+            not attach_name
+            and normalized_content_type
+            and not normalized_content_type.startswith("image/")
+            and normalized_content_type != "application/octet-stream"
+        ):
+            error_msg = "下载「{}」失败！返回内容非图片（{}）".format(url, normalized_content_type)
+            logging.info(error_msg)
+            return ""
+
         if attach_name:
             # 附件使用原文件名
             file_suffix = attach_name
         else:
-            # 图片根据content-type获取扩展名
-            # 后缀 png 和 jpeg 后可能出现 ; `**.png;`, 原因未知
-            content_type_arr = content_type.split("/")
-            file_suffix = (
-                "." + content_type_arr[1].replace(";", "")
-                if len(content_type_arr) == 2
-                else ".jpg"
-            )
+            # 图片根据 URL 或 content-type 获取扩展名
+            file_suffix = self._guess_image_extension(url, normalized_content_type, response.content)
 
         # 获取文件所在目录
         if file_path.find(".") == -1:
@@ -217,23 +225,27 @@ class ImagePull:
             os.makedirs(local_file_dir, exist_ok=True)
         file_basename = os.path.basename(urlparse(url).path)
 
-        # 请求后的真实的 URL 中才有东西
-        realUrl = parse.parse_qs(urlparse(response.url).query)
+        if attach_name:
+            # 请求后的真实的 URL 中才有东西
+            realUrl = parse.parse_qs(urlparse(response.url).query)
 
-        if realUrl:
-            filename = (
-                realUrl.get("filename")[0]
-                if realUrl.get("filename")
-                else realUrl.get("download")[0]
-                if realUrl.get("download")
-                else ""
-            )
-            file_name = file_basename + filename
+            if realUrl:
+                filename = (
+                    realUrl.get("filename")[0]
+                    if realUrl.get("filename")
+                    else realUrl.get("download")[0]
+                    if realUrl.get("download")
+                    else ""
+                )
+                file_name = file_basename + filename
+            else:
+                file_name = "".join([file_basename, file_suffix])
+            # 清理文件名
+            file_name = sanitize_filename(file_name)
         else:
-            file_name = "".join([file_basename, file_suffix])
-        
-        # 清理文件名
-        file_name = sanitize_filename(file_name)
+            # 图片使用唯一编码命名（基于内容 MD5，相同内容复用文件）
+            unique_hash = hashlib.md5(response.content).hexdigest()
+            file_name = f"{unique_hash}{file_suffix}"
         
         local_file_path = os.path.join(local_file_dir, file_name).replace("\\", "/")
 
@@ -247,6 +259,24 @@ class ImagePull:
             return ""
 
         return local_file_path
+
+    @staticmethod
+    def _guess_image_extension(url: str, content_type: str, data: bytes) -> str:
+        ext = os.path.splitext(urlparse(url).path)[1].lower()
+        if ext and ext != ".bin":
+            return ext
+        detected = imghdr.what(None, data)
+        if detected:
+            if detected == "jpeg":
+                return ".jpg"
+            return f".{detected}"
+        if content_type:
+            guessed = mimetypes.guess_extension(content_type)
+            if guessed and guessed != ".bin":
+                return guessed
+            if content_type.startswith("image/"):
+                return "." + content_type.split("/", 1)[1]
+        return ".jpg"
 
     def _set_relative_file_path(self, file_path, file_name, local_file_dir) -> str:
         """

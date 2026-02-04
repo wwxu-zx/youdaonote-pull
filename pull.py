@@ -197,22 +197,26 @@ class YoudaoNotePull(object):
 
     def _optimize_file_name(self, name) -> str:
         """
-        优化文件名
+        优化文件名，保留英文字母、数字、中文、下划线、横杠和点号
         :param name:
         :return:
         """
-        # 替换下划线
-        regex_symbol = re.compile(r"[<]")  # 符号： <
-        # 删除特殊字符
-        del_regex_symbol = re.compile(r'[\\/":\|\*\?#>]')  # 符号：\ / " : | * ? # >
-        # 首尾的空格
-        name = name.replace("\n", "")
-        # 去除换行符
-        name = name.strip()
-        # 替换一些特殊符号
-        name = regex_symbol.sub("_", name)
-        name = del_regex_symbol.sub("", name)
-        return name
+        # 去除换行符和首尾空格
+        name = name.replace("\n", "").strip()
+        
+        # 分离文件名和扩展名
+        base_name, ext = os.path.splitext(name)
+        
+        # 保留英文字母、数字、中文、下划线、横杠，其他字符替换为下划线
+        base_name = re.sub(r'[^a-zA-Z0-9\u4e00-\u9fff_-]', '_', base_name)
+        
+        # 合并连续的下划线
+        base_name = re.sub(r'_+', '_', base_name)
+        
+        # 去除首尾的下划线和横杠
+        base_name = base_name.strip('_-')
+        
+        return base_name + ext
 
     def pull_dir_by_id_recursively(self, dir_id, local_dir):
         """

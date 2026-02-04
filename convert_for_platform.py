@@ -12,7 +12,7 @@ import argparse
 from pathlib import Path
 
 # 默认配置
-DEFAULT_BLOG_DIR = "/Users/wwxu/Documents/ydnote"
+DEFAULT_BLOG_DIR = "./ydnote"
 GITHUB_USERNAME = "wwxu-zx"  # 修改为你的 GitHub 用户名
 GITHUB_REPO = "blog"      # 修改为你的仓库名
 GITHUB_BRANCH = "main"    # 或 "master"
@@ -225,7 +225,13 @@ class PlatformConverter:
         if img_path.startswith(('http://', 'https://')):
             return match.group(0)
         
-        # 处理 ../assets/ 开头的路径
+        # 处理 ../assets_ori/ 或 ../assets/ 开头的路径
+        if img_path.startswith('../assets_ori/'):
+            relative_path = img_path[15:]  # 移除 "../assets_ori/"
+            return (
+                f"https://raw.githubusercontent.com/{self.github_user}/"
+                f"{self.github_repo}/{self.github_branch}/assets/{relative_path}"
+            )
         if img_path.startswith('../assets/'):
             # 去掉 ../ 前缀
             relative_path = img_path[3:]  # 移除 "../"
@@ -239,7 +245,13 @@ class PlatformConverter:
             )
             return f"![{img_alt}]({github_url})"
         
-        # 处理 assets/ 开头的路径
+        # 处理 assets_ori/ 或 assets/ 开头的路径
+        if img_path.startswith('assets_ori/'):
+            relative_path = img_path[11:]  # 移除 "assets_ori/"
+            return (
+                f"https://raw.githubusercontent.com/{self.github_user}/"
+                f"{self.github_repo}/{self.github_branch}/assets/{relative_path}"
+            )
         if img_path.startswith('assets/'):
             from urllib.parse import quote
             encoded_path = quote(img_path, safe='/.')
@@ -259,9 +271,6 @@ class PlatformConverter:
         
         # 获取笔记名称（不含扩展名）
         note_name = Path(file_path).stem
-        
-        # 添加文章信息头部（可选）
-        header = f"<!-- 原文件: {note_name}.md -->\n<!-- 图片托管于 GitHub -->\n\n"
         
         # 处理图片链接 - 匹配 ![alt](path) 和 ![](<path>) 格式
         # 先处理 <> 包裹的路径
@@ -288,9 +297,8 @@ class PlatformConverter:
         content = self.normalize_colors(content)
         
         # 写入输出文件
-        final_content = header + content
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(final_content)
+            f.write(content)
         
         return True
     
